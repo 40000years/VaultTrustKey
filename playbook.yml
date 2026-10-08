@@ -24,6 +24,7 @@
               register: vault_api_response
               run_once: true
               delegate_to: localhost
+              become: false
 
             - name: Set CA content from API response
               ansible.builtin.set_fact:
@@ -118,4 +119,3 @@
       ansible.builtin.service:
         name: "{{ ssh_service_name }}"
         state: reloaded
-
