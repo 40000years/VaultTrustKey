@@ -1,0 +1,61 @@
+---
+# ==============================================================================
+# Configuration Variables for Vault SSH CA Trust Setup
+# ==============================================================================
+
+# วิธีการดึง Vault SSH CA Public Key:
+# มี 3 รูปแบบให้เลือก:
+# 1. 'api'    : ดึง Public Key จาก HashiCorp Vault Server อัตโนมัติผ่าน REST API
+# 2. 'string' : ใส่เนื้อหา Public Key ตรงๆ ในตัวแปร vault_ca_public_key
+# 3. 'file'   : อ่านจากไฟล์ Public Key ที่อยู่บนเครื่อง Ansible Control Node
+vault_ca_source_type: "api"
+
+# --- กรณีเลือก vault_ca_source_type: "api" ---
+# URL ของ Vault Server
+vault_addr: "https://vault.example.com:8200"
+
+# Path ของ SSH Secrets Engine ที่เปิดไว้ใน Vault (ค่าเริ่มต้นมักจะเป็น ssh หรือ ssh-client-signer)
+vault_ssh_mount: "ssh"
+
+# ตรวจสอบ SSL Certificate ของ Vault หรือไม่ (กรณีใช้ Self-signed ให้ตั้งเป็น false)
+vault_validate_certs: true
+
+# --- กรณีเลือก vault_ca_source_type: "string" ---
+# วาง Public Key ของ Vault SSH CA ลงในนี้ (เช่น ssh-rsa AAAAB3NzaC1... หรือ ssh-ed25519 AAAAC3Nza...)
+vault_ca_public_key: ""
+
+# --- กรณีเลือก vault_ca_source_type: "file" ---
+# Path ไปยังไฟล์ CA Public Key บนเครื่องเครื่อง Ansible
+vault_ca_local_file: "files/vault_ca.pub"
+
+# ------------------------------------------------------------------------------
+# SSH Server Configuration on EC2
+# ------------------------------------------------------------------------------
+# ตำแหน่งไฟล์ CA Key บนเครื่อง EC2
+trusted_user_ca_file: "/etc/ssh/trusted-user-ca-keys.pem"
+
+# ตำแหน่ง sshd_config
+sshd_config_path: "/etc/ssh/sshd_config"
+
+# ------------------------------------------------------------------------------
+# Authorized Principals Configuration (Optional)
+# ------------------------------------------------------------------------------
+# โดยปกติ OpenSSH จะยอมรับ Certificate ก็ต่อเมื่อ "Principal" ใน Cert ตรงกับ Username (เช่น ubuntu หรือ ec2-user)
+# หากต้องการให้ Vault Cert ที่มี Principals อื่น (เช่น admin, devops, engineer) สามารถ Login เข้า user ต่างๆ ได้
+# ให้เปิด enable_authorized_principals: true
+enable_authorized_principals: false
+
+# โฟลเดอร์เก็บไฟล์ Authorized Principals
+authorized_principals_dir: "/etc/ssh/auth_principals"
+
+# แมปผู้ใช้งานในระบบ กับ Principals ที่อนุญาต
+# ตัวอย่าง: ให้ Certificate ที่มี principal 'devops' หรือ 'admin' สามารถ login ด้วย user 'ubuntu' ได้
+authorized_principals_mapping:
+  ubuntu:
+    - ubuntu
+    - devops
+    - admin
+  ec2-user:
+    - ec2-user
+    - devops
+    - admin

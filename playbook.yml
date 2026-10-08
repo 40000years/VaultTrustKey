@@ -1,0 +1,120 @@
+---
+- name: Configure EC2 Instances to Trust HashiCorp Vault SSH CA
+  hosts: ec2_servers
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: 1. Determine SSH service name according to OS distribution
+      ansible.builtin.set_fact:
+        ssh_service_name: "{{ 'ssh' if ansible_facts['os_family'] == 'Debian' else 'sshd' }}"
+
+    - name: 2. Fetch Vault SSH CA Public Key
+      block:
+        - name: 2.1 Fetch CA Public Key from HashiCorp Vault API
+          when: vault_ca_source_type == 'api'
+          block:
+            - name: Call Vault HTTP API to get SSH CA Public Key
+              ansible.builtin.uri:
+                url: "{{ vault_addr }}/v1/{{ vault_ssh_mount }}/public_key"
+                method: GET
+                return_content: true
+                validate_certs: "{{ vault_validate_certs }}"
+                status_code: 200
+              register: vault_api_response
+              run_once: true
+              delegate_to: localhost
+
+            - name: Set CA content from API response
+              ansible.builtin.set_fact:
+                ca_content: "{{ vault_api_response.content | trim }}"
+
+        - name: 2.2 Set CA Public Key from direct string variable
+          when: vault_ca_source_type == 'string'
+          ansible.builtin.set_fact:
+            ca_content: "{{ vault_ca_public_key | trim }}"
+
+        - name: 2.3 Set CA Public Key from local file
+          when: vault_ca_source_type == 'file'
+          ansible.builtin.set_fact:
+            ca_content: "{{ lookup('file', vault_ca_local_file) | trim }}"
+
+    - name: 3. Verify that CA Public Key content is not empty
+      ansible.builtin.assert:
+        that:
+          - ca_content is defined
+          - ca_content | length > 0
+          - ca_content is match('^(ssh-|ecdsa-).*')
+        fail_msg: "Vault SSH CA Public Key ไม่ถูกต้อง หรือว่างเปล่า กรุณาตรวจสอบการตั้งค่า vault_ca_*"
+
+    - name: 4. Place Vault SSH CA Public Key on EC2
+      ansible.builtin.copy:
+        content: "{{ ca_content }}\n"
+        dest: "{{ trusted_user_ca_file }}"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Reload SSH service
+
+    - name: 5. Ensure PubkeyAuthentication is enabled in sshd_config
+      ansible.builtin.lineinfile:
+        path: "{{ sshd_config_path }}"
+        regexp: '^#?PubkeyAuthentication'
+        line: 'PubkeyAuthentication yes'
+        state: present
+        validate: '/usr/sbin/sshd -t -f %s'
+      notify: Reload SSH service
+
+    - name: 6. Configure TrustedUserCAKeys in sshd_config
+      ansible.builtin.lineinfile:
+        path: "{{ sshd_config_path }}"
+        regexp: '^#?TrustedUserCAKeys'
+        line: "TrustedUserCAKeys {{ trusted_user_ca_file }}"
+        state: present
+        validate: '/usr/sbin/sshd -t -f %s'
+      notify: Reload SSH service
+
+    - name: 7. Configure Authorized Principals (Optional)
+      when: enable_authorized_principals | bool
+      block:
+        - name: 7.1 Ensure Authorized Principals directory exists
+          ansible.builtin.file:
+            path: "{{ authorized_principals_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: '0755'
+
+        - name: 7.2 Configure AuthorizedPrincipalsFile in sshd_config
+          ansible.builtin.lineinfile:
+            path: "{{ sshd_config_path }}"
+            regexp: '^#?AuthorizedPrincipalsFile'
+            line: "AuthorizedPrincipalsFile {{ authorized_principals_dir }}/%u"
+            state: present
+            validate: '/usr/sbin/sshd -t -f %s'
+          notify: Reload SSH service
+
+        - name: 7.3 Create authorized principals files for mapped users
+          ansible.builtin.copy:
+            content: "{{ item.value | join('\n') }}\n"
+            dest: "{{ authorized_principals_dir }}/{{ item.key }}"
+            owner: root
+            group: root
+            mode: '0644'
+          loop: "{{ authorized_principals_mapping | dict2items }}"
+          when: authorized_principals_mapping is defined
+
+    - name: 8. Remove AuthorizedPrincipalsFile from sshd_config if disabled
+      when: not (enable_authorized_principals | bool)
+      ansible.builtin.lineinfile:
+        path: "{{ sshd_config_path }}"
+        regexp: '^AuthorizedPrincipalsFile'
+        state: absent
+        validate: '/usr/sbin/sshd -t -f %s'
+      notify: Reload SSH service
+
+  handlers:
+    - name: Reload SSH service
+      ansible.builtin.service:
+        name: "{{ ssh_service_name }}"
+        state: reloaded

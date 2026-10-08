@@ -1,0 +1,3 @@
+# วาง Vault SSH CA Public Key ในไฟล์นี้หากเลือก vault_ca_source_type: "file"
+# ตัวอย่าง:
+# ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC... vault-ca-key
